@@ -12,8 +12,6 @@ namespace OrderManagementSystem.Main
         public static void Main(string[] args)
         {
             IOrderManagementRepository orderManager = new OrderProcessor();
-
-            // Menu-driven application for the functionalities
             while (true)
             {
                 Console.WriteLine("Select an operation: \n1. Create User \n2. Create Product \n3. Cancel Order \n4. Get All Products \n5. Get Order by User \n6. Create Order \n7. Exit");
@@ -188,41 +186,43 @@ namespace OrderManagementSystem.Main
                             Console.WriteLine("Error fetching orders: " + ex.Message);
                         }
                         break;
-                    case 6:
-                        Console.WriteLine("Enter User ID to create an order:");
-                        int orderCreatorUserId = Convert.ToInt32(Console.ReadLine());
-                        Console.WriteLine("Enter number of products to order:");
-                        int numProducts = Convert.ToInt32(Console.ReadLine());
-                        List<Product> orderProducts = new List<Product>();
+                    case 6:  // Create Order
+    Console.WriteLine("Enter User ID to create an order:");
+    int orderCreatorUserId = Convert.ToInt32(Console.ReadLine());
+    Console.WriteLine("Enter number of products to order:");
+    int numProducts = Convert.ToInt32(Console.ReadLine());
+    List<(Product, int)> orderProductsWithQuantities = new List<(Product, int)>();
 
-                        for (int i = 0; i < numProducts; i++)
-                        {
-                            Console.WriteLine($"Enter Product ID for product {i + 1}:");
-                            int orderProductId = Convert.ToInt32(Console.ReadLine());
+    for (int i = 0; i < numProducts; i++)
+    {
+        Console.WriteLine($"Enter Product ID for product {i + 1}:");
+        int orderProductId = Convert.ToInt32(Console.ReadLine());
 
-                            // Assuming you have a method to fetch a product by ID
-                            Product product = orderManager.GetAllProducts().Find(p => p.ProductId == orderProductId);
-                            if (product != null)
-                            {
-                                orderProducts.Add(product);
-                            }
-                            else
-                            {
-                                Console.WriteLine($"Product with ID {orderProductId} not found.");
-                            }
-                        }
+        // Assuming you have a method to fetch a product by ID
+        Product product = orderManager.GetAllProducts().Find(p => p.ProductId == orderProductId);
+        if (product != null)
+        {
+            Console.WriteLine($"Enter quantity for {product.ProductName}:");
+            int quantity = Convert.ToInt32(Console.ReadLine());
+            orderProductsWithQuantities.Add((product, quantity));
+        }
+        else
+        {
+            Console.WriteLine($"Product with ID {orderProductId} not found.");
+        }
+    }
 
-                        try
-                        {
-                            User orderCreator = new User(orderCreatorUserId, "", "", ""); // Create a user instance with just UserId
-                            orderManager.CreateOrder(orderCreator, orderProducts);
-                            Console.WriteLine("Order created successfully.");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error creating order: {ex.Message}");
-                        }
-                        break;
+    try
+    {
+                     orderManager.CreateOrder(new User(orderCreatorUserId, "username", "password", "role"), orderProductsWithQuantities);
+
+                     Console.WriteLine("Order created successfully.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error creating order: {ex.Message}");
+    }
+    break;
                     case 7:
                         Console.WriteLine("Exiting application...");
                         Environment.Exit(0);

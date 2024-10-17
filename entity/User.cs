@@ -20,5 +20,9 @@ namespace OrderManagementSystem.entity
             Password = password;
             Role = role;
         }
+        public User(int userId)
+        {
+            UserId = userId;
+        }
     }
 }

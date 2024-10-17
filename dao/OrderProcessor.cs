@@ -1,9 +1,4 @@
 ﻿using OrderManagementSystem.entity;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using OrderManagementSystem.util;
 using OrderManagementSystem.exception;
 using System.Collections.Generic;
@@ -13,82 +8,147 @@ namespace OrderManagementSystem.dao
 {
     public class OrderProcessor : IOrderManagementRepository
     {
-        // Create Order and store it in the Orders table, linking the user and product.
-        
-            public void CreateOrder(User user, List<Product> products)
-            {
-                using (SqlConnection conn = DBConnUtil.GetDBConn())
-                {
-                    conn.Open();
-                    using (SqlTransaction transaction = conn.BeginTransaction())
-                    {
-                        try
-                        {
-                            // Assuming there's an Orders table
-                            string insertOrderQuery = "INSERT INTO Orders (UserId) OUTPUT INSERTED.OrderId VALUES (@UserId)";
-                            SqlCommand command = new SqlCommand(insertOrderQuery, conn, transaction);
-                            command.Parameters.AddWithValue("@UserId", user.UserId);
-
-                            // Retrieve the new OrderId
-                            int newOrderId = (int)command.ExecuteScalar();
-
-                            // Insert products for the order
-                            foreach (var product in products)
-                            {
-                                string insertOrderDetailsQuery = "INSERT INTO OrderDetails (OrderId, ProductId) VALUES (@OrderId, @ProductId)";
-                                SqlCommand detailsCommand = new SqlCommand(insertOrderDetailsQuery, conn, transaction);
-                                detailsCommand.Parameters.AddWithValue("@OrderId", newOrderId);
-                                detailsCommand.Parameters.AddWithValue("@ProductId", product.ProductId); // Ensure this matches your column name
-                                detailsCommand.ExecuteNonQuery();
-                            }
-
-                            transaction.Commit();
-                        }
-                        catch (Exception)
-                        {
-                            transaction.Rollback();
-                            throw; // Rethrow to handle it in the calling method
-                        }
-                    }
-                }
-            }
-
-            // Cancel the order and remove it from the Orders table
-            public void CancelOrder(int userId, int orderId)
+        // Create Order and store it in the Orders and OrderItems tables
+        public void CreateOrder(User user, List<(Product product, int quantity)> productsWithQuantities)
         {
             using (SqlConnection conn = DBConnUtil.GetDBConn())
             {
                 conn.Open();
-
-                // Check if the order exists in the Orders table
-                string checkOrderQuery = "SELECT COUNT(*) FROM Orders WHERE OrderId = @OrderId AND UserId = @UserId";
-                using (SqlCommand checkOrderCmd = new SqlCommand(checkOrderQuery, conn))
+                using (SqlTransaction transaction = conn.BeginTransaction())
                 {
-                    checkOrderCmd.Parameters.AddWithValue("@OrderId", orderId);
-                    checkOrderCmd.Parameters.AddWithValue("@UserId", userId);
-
-                    int orderExists = (int)checkOrderCmd.ExecuteScalar();
-                    if (orderExists == 0)
+                    try
                     {
-                        // If order does not exist, throw exception
-                        throw new OrderNotFoundException($"Order with ID {orderId} for User ID {userId} not found.");
+                        // Check if the user exists in the Users table
+                        string checkUserQuery = "SELECT COUNT(*) FROM Users WHERE UserId = @UserId";
+                        using (SqlCommand checkUserCmd = new SqlCommand(checkUserQuery, conn, transaction))
+                        {
+                            checkUserCmd.Parameters.AddWithValue("@UserId", user.UserId);
+                            int userExists = (int)checkUserCmd.ExecuteScalar();
+                            if (userExists == 0)
+                            {
+                                throw new UserNotFoundException($"User with ID {user.UserId} not found.");
+                            }
+                        }
+
+                        // Generate a new OrderId
+                        int newOrderId;
+                        string getNextOrderIdQuery = "SELECT ISNULL(MAX(OrderId), 0) + 1 FROM Orders";
+                        using (SqlCommand getOrderIdCmd = new SqlCommand(getNextOrderIdQuery, conn, transaction))
+                        {
+                            newOrderId = (int)getOrderIdCmd.ExecuteScalar();
+                        }
+
+                        // Insert the new order in the Orders table
+                        string insertOrderQuery = "INSERT INTO Orders (OrderId, UserId, OrderDate) VALUES (@OrderId, @UserId, GETDATE())";
+                        using (SqlCommand insertOrderCmd = new SqlCommand(insertOrderQuery, conn, transaction))
+                        {
+                            insertOrderCmd.Parameters.AddWithValue("@OrderId", newOrderId);
+                            insertOrderCmd.Parameters.AddWithValue("@UserId", user.UserId);
+                            insertOrderCmd.ExecuteNonQuery();
+                        }
+
+                        // Insert the order items in the OrderItems table
+                        foreach (var (product, quantity) in productsWithQuantities)
+                        {
+                            // Ensure product exists
+                            string checkProductQuery = "SELECT COUNT(*) FROM Products WHERE ProductId = @ProductId";
+                            using (SqlCommand checkProductCmd = new SqlCommand(checkProductQuery, conn, transaction))
+                            {
+                                checkProductCmd.Parameters.AddWithValue("@ProductId", product.ProductId);
+                                int productExists = (int)checkProductCmd.ExecuteScalar();
+                                if (productExists == 0)
+                                {
+                                    throw new ProductNotFoundException($"Product with ID {product.ProductId} not found.");
+                                }
+                            }
+
+                            // Generate a new OrderItemId
+                            int newOrderItemId;
+                            string getNextOrderItemIdQuery = "SELECT ISNULL(MAX(OrderItemId), 0) + 1 FROM OrderItems";
+                            using (SqlCommand getOrderItemIdCmd = new SqlCommand(getNextOrderItemIdQuery, conn, transaction))
+                            {
+                                newOrderItemId = (int)getOrderItemIdCmd.ExecuteScalar();
+                            }
+
+                            // Insert into OrderItems table
+                            string insertOrderItemQuery = @"
+                                INSERT INTO OrderItems (OrderItemId, OrderId, ProductId, Quantity) 
+                                VALUES (@OrderItemId, @OrderId, @ProductId, @Quantity)";
+                            using (SqlCommand insertOrderItemCmd = new SqlCommand(insertOrderItemQuery, conn, transaction))
+                            {
+                                insertOrderItemCmd.Parameters.AddWithValue("@OrderItemId", newOrderItemId);
+                                insertOrderItemCmd.Parameters.AddWithValue("@OrderId", newOrderId);
+                                insertOrderItemCmd.Parameters.AddWithValue("@ProductId", product.ProductId);
+                                insertOrderItemCmd.Parameters.AddWithValue("@Quantity", quantity);
+                                insertOrderItemCmd.ExecuteNonQuery();
+                            }
+                        }
+
+                        transaction.Commit();
+                        Console.WriteLine("Order created successfully.");
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        throw new Exception("Error creating order: " + ex.Message);
                     }
                 }
-
-                // Delete the order if it exists
-                string deleteOrderQuery = "DELETE FROM Orders WHERE OrderId = @OrderId AND UserId = @UserId";
-                using (SqlCommand deleteOrderCmd = new SqlCommand(deleteOrderQuery, conn))
-                {
-                    deleteOrderCmd.Parameters.AddWithValue("@OrderId", orderId);
-                    deleteOrderCmd.Parameters.AddWithValue("@UserId", userId);
-                    deleteOrderCmd.ExecuteNonQuery();
-                }
-
-                conn.Close();
             }
         }
 
-        // Add a new product if the user is an admin
+        // Cancel the order and remove it from the Orders and OrderItems tables
+        public void CancelOrder(int userId, int orderId)
+        {
+            using (SqlConnection conn = DBConnUtil.GetDBConn())
+            {
+                conn.Open();
+                using (SqlTransaction transaction = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        // Check if the order exists
+                        string checkOrderQuery = "SELECT COUNT(*) FROM Orders WHERE OrderId = @OrderId AND UserId = @UserId";
+                        using (SqlCommand checkOrderCmd = new SqlCommand(checkOrderQuery, conn, transaction))
+                        {
+                            checkOrderCmd.Parameters.AddWithValue("@OrderId", orderId);
+                            checkOrderCmd.Parameters.AddWithValue("@UserId", userId);
+                            int orderExists = (int)checkOrderCmd.ExecuteScalar();
+                            if (orderExists == 0)
+                            {
+                                throw new OrderNotFoundException($"Order with ID {orderId} for User ID {userId} not found.");
+                            }
+                        }
+
+                        // Delete the order items first
+                        string deleteOrderItemsQuery = "DELETE FROM OrderItems WHERE OrderId = @OrderId";
+                        using (SqlCommand deleteOrderItemsCmd = new SqlCommand(deleteOrderItemsQuery, conn, transaction))
+                        {
+                            deleteOrderItemsCmd.Parameters.AddWithValue("@OrderId", orderId);
+                            deleteOrderItemsCmd.ExecuteNonQuery();
+                        }
+
+                        // Then delete the order
+                        string deleteOrderQuery = "DELETE FROM Orders WHERE OrderId = @OrderId AND UserId = @UserId";
+                        using (SqlCommand deleteOrderCmd = new SqlCommand(deleteOrderQuery, conn, transaction))
+                        {
+                            deleteOrderCmd.Parameters.AddWithValue("@OrderId", orderId);
+                            deleteOrderCmd.Parameters.AddWithValue("@UserId", userId);
+                            deleteOrderCmd.ExecuteNonQuery();
+                        }
+
+                        transaction.Commit();
+                        Console.WriteLine("Order cancelled successfully.");
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        throw new Exception("Error cancelling order: " + ex.Message);
+                    }
+                }
+            }
+        }
+
+        // Create a new product
         public void CreateProduct(User user, Product product)
         {
             if (user.Role != "Admin")
@@ -97,8 +157,6 @@ namespace OrderManagementSystem.dao
             using (SqlConnection conn = DBConnUtil.GetDBConn())
             {
                 conn.Open();
-
-                // Insert product into the Products table
                 string insertProductQuery = @"
                     INSERT INTO Products (ProductId, ProductName, Description, Price, QuantityInStock, Type)
                     VALUES (@ProductId, @ProductName, @Description, @Price, @QuantityInStock, @Type)";
@@ -118,14 +176,12 @@ namespace OrderManagementSystem.dao
             }
         }
 
-        // Add a new user to the Users table
+        // Create a new user
         public void CreateUser(User user)
         {
             using (SqlConnection conn = DBConnUtil.GetDBConn())
             {
                 conn.Open();
-
-                // Insert user into the Users table
                 string insertUserQuery = @"
                     INSERT INTO Users (UserId, Username, Password, Role)
                     VALUES (@UserId, @Username, @Password, @Role)";
@@ -143,7 +199,7 @@ namespace OrderManagementSystem.dao
             }
         }
 
-        // Retrieve all products from the Products table
+        // Retrieve all products
         public List<Product> GetAllProducts()
         {
             List<Product> products = new List<Product>();
@@ -151,9 +207,8 @@ namespace OrderManagementSystem.dao
             using (SqlConnection conn = DBConnUtil.GetDBConn())
             {
                 conn.Open();
-
-                // Select all products from the database
                 string getAllProductsQuery = "SELECT * FROM Products";
+
                 using (SqlCommand getAllProductsCmd = new SqlCommand(getAllProductsQuery, conn))
                 {
                     using (SqlDataReader reader = getAllProductsCmd.ExecuteReader())
@@ -179,7 +234,7 @@ namespace OrderManagementSystem.dao
             return products;
         }
 
-        // Retrieve all orders placed by a specific user from the Orders table
+        // Retrieve all orders by user
         public List<Product> GetOrderByUser(User user)
         {
             List<Product> orderedProducts = new List<Product>();
@@ -187,12 +242,11 @@ namespace OrderManagementSystem.dao
             using (SqlConnection conn = DBConnUtil.GetDBConn())
             {
                 conn.Open();
-
-                // Fetch orders for the given user
                 string getOrderByUserQuery = @"
                     SELECT p.ProductId, p.ProductName, p.Description, p.Price, p.QuantityInStock, p.Type
                     FROM Orders o
-                    JOIN Products p ON o.ProductId = p.ProductId
+                    JOIN OrderItems oi ON o.OrderId = oi.OrderId
+                    JOIN Products p ON oi.ProductId = p.ProductId
                     WHERE o.UserId = @UserId";
 
                 using (SqlCommand getOrderByUserCmd = new SqlCommand(getOrderByUserQuery, conn))
